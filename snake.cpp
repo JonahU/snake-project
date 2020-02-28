@@ -1,5 +1,11 @@
 #include <deque>
+#include <chrono>
 #include <ncurses.h>
+#include <thread>
+
+#include <iostream> // TODO: remove later
+
+using namespace std::literals::chrono_literals;
 
 enum class Direction {
     None, Up, Down, Left, Right
@@ -58,6 +64,14 @@ class Player {
     int identifier; // Player 1, Player 2 etc.
     Snake my_snake;
     int key_up, key_down, key_left, key_right;
+    std::thread input_thread;
+
+    void input_handler() {
+        while(1) {
+            handle_key_press(getch());
+        }
+    }
+
 public:
     Player(
         int num,
@@ -76,8 +90,17 @@ public:
         key_left(left),
         key_right(right) 
     {}
+
+    ~Player() {
+        if (input_thread.joinable())
+            input_thread.join();
+    }
+
+    void start() {
+        input_thread = std::thread(&Player::input_handler, this);
+    }
     
-    void handle_key_press(const int input_ch) {
+    void handle_key_press(const int input_ch) { 
         if(input_ch == key_up) {
             my_snake.change_direction(Direction::Up);
         } else if (input_ch == key_down) {
@@ -98,7 +121,54 @@ public:
     }
 };
 
+// TODO: class GameBoard
+
+struct Game {
+    Player player_1;
+    Player player_2;
+    bool game_over;
+    Game() :
+        player_1(1, {25,50}, Direction::Right, 'w', 's', 'a', 'd'),
+        player_2(2, {75,50}, Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT),
+        game_over(false)
+    {}
+
+    void start() {
+        player_1.start(); // spin up player 1 input thread
+        player_2.start(); // spin up player 2 input thread
+        // GameBoard.start() spin up game render thread
+
+        while (!game_over)
+        {
+            auto start_time = std::chrono::steady_clock::now();
+
+            // 1) UPDATE
+            update();
+            // 2) RENDER
+            // GameBoard.render()
+
+            auto finish_time = std::chrono::steady_clock::now();
+            auto time_taken = finish_time-start_time;
+            auto time_taken_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_taken);
+            std::this_thread::sleep_for(50ms - time_taken_milliseconds); // 20 fps
+        }
+        
+    }
+
+    void update() {
+        player_1.update();
+        player_2.update();
+        // TODO: check for winner
+    }
+};
+
 int main() {
-    Player player_1{1, {25,50}, Direction::Right, 'w', 's', 'a', 'd'};
-    Player player_2{2, {75,50}, Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT};
+    // initscr(); // start curses mode
+    // cbreak(); // disable line buffering
+    // keypad(stdscr, TRUE); // allow arrow & fn keys
+    // noecho(); // turn off echoing
+    // curs_set(0); // hide the cursor
+    
+    Game game;
+    game.start();
 }
