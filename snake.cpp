@@ -100,7 +100,7 @@ public:
         input_thread = std::thread(&Player::input_handler, this);
     }
     
-    void handle_key_press(const int input_ch) { 
+    void handle_key_press(const int input_ch) {
         if(input_ch == key_up) {
             my_snake.change_direction(Direction::Up);
         } else if (input_ch == key_down) {
@@ -112,8 +112,9 @@ public:
         }
     }
 
-    void update() {
+    Coordinates update() {
         my_snake.move();
+        return my_snake.get_head();
     }
 
     int who() {
@@ -121,31 +122,75 @@ public:
     }
 };
 
-// TODO: class GameBoard
+class GameWindow
+{
+    Coordinates player1_start;
+    Coordinates player2_start;
+public:
+    GameWindow(){
+        initscr(); // start curses mode
+        cbreak(); // disable line buffering
+        keypad(stdscr, TRUE); // allow arrow & fn keys
+        noecho(); // turn off echoing
+        // TODO: enable later curs_set(0); // hide the cursor 
 
-struct Game {
+        int max_x;
+        int max_y;
+        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
+        int half_y = max_y/2;
+        int quarter_x = max_x / 4;
+        int three_quarter_x = quarter_x*3;
+        player1_start = {quarter_x, half_y};
+        player2_start = {three_quarter_x, half_y};
+    };
+    GameWindow(const GameWindow&) = delete;
+    ~GameWindow() {
+        endwin();
+    }
+
+    Coordinates get_player1_start() {
+        return player1_start;
+    }
+
+    Coordinates get_player2_start() {
+        return player2_start;
+    }
+
+    void update(Coordinates p1_pos, Coordinates p2_pos) {
+        wclear(stdscr);
+        mvwaddstr(stdscr, p1_pos.y, p1_pos.x, "1");
+        mvwaddstr(stdscr, p2_pos.y, p2_pos.x, "2");
+    }
+
+    void render() {
+        wrefresh(stdscr);
+    }
+};
+
+class Game {
+    GameWindow game_window;
     Player player_1;
     Player player_2;
     bool game_over;
+public:
     Game() :
-        player_1(1, {25,50}, Direction::Right, 'w', 's', 'a', 'd'),
-        player_2(2, {75,50}, Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT),
+        player_1(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd'),
+        player_2(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT),
         game_over(false)
     {}
 
     void start() {
         player_1.start(); // spin up player 1 input thread
         player_2.start(); // spin up player 2 input thread
-        // GameBoard.start() spin up game render thread
 
         while (!game_over)
         {
             auto start_time = std::chrono::steady_clock::now();
 
-            // 1) UPDATE
+            // 1) UPDATE (producer?)
             update();
-            // 2) RENDER
-            // GameBoard.render()
+            // 2) RENDER (consumer?)
+            game_window.render();
 
             auto finish_time = std::chrono::steady_clock::now();
             auto time_taken = finish_time-start_time;
@@ -156,19 +201,14 @@ struct Game {
     }
 
     void update() {
-        player_1.update();
-        player_2.update();
+        Coordinates p1_pos = player_1.update();
+        Coordinates p2_pos = player_2.update();
+        game_window.update(p1_pos, p2_pos);
         // TODO: check for winner
     }
 };
 
 int main() {
-    // initscr(); // start curses mode
-    // cbreak(); // disable line buffering
-    // keypad(stdscr, TRUE); // allow arrow & fn keys
-    // noecho(); // turn off echoing
-    // curs_set(0); // hide the cursor
-    
     Game game;
     game.start();
 }
