@@ -16,11 +16,13 @@ enum class Direction {
 };
 
 struct Coordinates { int x, y; };
+typedef std::deque<Coordinates> CoordinatesQueue;
 
 class Snake {
+
+    CoordinatesQueue snake_body;
     Direction direction;
     int length;
-    std::deque<Coordinates> position;
 
     Coordinates get_next_pos() {
         auto next_pos = get_head();
@@ -45,11 +47,16 @@ class Snake {
     }
 public:
     Snake(Coordinates start_pos, Direction start_dir, int len) :length(len), direction(start_dir) {
-        position.push_front(start_pos);
+        snake_body.push_front(start_pos);
     }
 
-    Coordinates get_head() {
-        return position.front();
+    Coordinates const& get_head() {
+        return snake_body.front();
+    }
+
+    CoordinatesQueue const& get_body() {
+        // body includes head
+        return snake_body;
     }
 
     void change_direction(Direction new_dir) {
@@ -57,10 +64,10 @@ public:
     }
 
     void move() {
-        if(position.size() == length) {
-            position.pop_back();
+        if(snake_body.size() == length) {
+            snake_body.pop_back();
         }
-        position.push_front(get_next_pos());
+        snake_body.push_front(get_next_pos());
     }
 };
 
@@ -100,9 +107,9 @@ public:
         }
     }
 
-    Coordinates update() {
+    CoordinatesQueue const& update() {
         my_snake.move();
-        return my_snake.get_head();
+        return my_snake.get_body();
     }
 
     int who() {
@@ -152,7 +159,7 @@ public:
     ~GameWindow() {
         if (input_thread.joinable())
             input_thread.join();
-        endwin();
+        endwin(); // end curses mode
     }
 
     void set_players(shared_ptr<Player> p1, shared_ptr<Player> p2) {
@@ -175,15 +182,14 @@ public:
         return player2_start;
     }
 
-    void update(Coordinates p1_pos) {
+    void update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
         wclear(stdscr);
-        mvwaddstr(stdscr, p1_pos.y, p1_pos.x, "1");
-    }
-
-    void update(Coordinates p1_pos, Coordinates p2_pos) {
-        wclear(stdscr);
-        mvwaddstr(stdscr, p1_pos.y, p1_pos.x, "1");
-        mvwaddstr(stdscr, p2_pos.y, p2_pos.x, "2");
+        for (Coordinates pos: p1_pos) {
+            mvwaddch(stdscr, pos.y, pos.x, '1');
+        }
+        for (Coordinates pos: p2_pos) {
+            mvwaddch(stdscr, pos.y, pos.x, '2');
+        }
     }
 
     void render() {
@@ -225,10 +231,9 @@ public:
     }
 
     void update() {
-        Coordinates p1_pos = player_1->update();
-        Coordinates p2_pos = player_2->update();
+        CoordinatesQueue const& p1_pos = player_1->update();
+        CoordinatesQueue const& p2_pos = player_2->update();
         game_window.update(p1_pos, p2_pos);
-        // game_window.update(p1_pos);
         // TODO: check for winner
     }
 };
