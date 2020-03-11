@@ -2,10 +2,14 @@
 #include <chrono>
 #include <ncurses.h>
 #include <thread>
+#include <memory>
+#include <stdexcept>
 
 #include <iostream> // TODO: remove later
 
 using namespace std::literals::chrono_literals;
+using std::shared_ptr;
+using std::make_shared;
 
 enum class Direction {
     None, Up, Down, Left, Right
@@ -23,10 +27,10 @@ class Snake {
         switch (direction)
         {
         case Direction::Up:
-            next_pos.y ++;
+            next_pos.y --;
             break;
         case Direction::Down:
-            next_pos.y --;
+            next_pos.y ++;
             break;
         case Direction::Left:
             next_pos.x --;
@@ -64,13 +68,6 @@ class Player {
     int identifier; // Player 1, Player 2 etc.
     Snake my_snake;
     int key_up, key_down, key_left, key_right;
-    std::thread input_thread;
-
-    void input_handler() {
-        while(1) {
-            handle_key_press(getch());
-        }
-    }
 
 public:
     Player(
@@ -90,15 +87,6 @@ public:
         key_left(left),
         key_right(right) 
     {}
-
-    ~Player() {
-        if (input_thread.joinable())
-            input_thread.join();
-    }
-
-    void start() {
-        input_thread = std::thread(&Player::input_handler, this);
-    }
     
     void handle_key_press(const int input_ch) {
         if(input_ch == key_up) {
@@ -126,13 +114,30 @@ class GameWindow
 {
     Coordinates player1_start;
     Coordinates player2_start;
+    std::thread input_thread;
+    shared_ptr<Player> player_1;
+    shared_ptr<Player> player_2;
+
+    void input_handler() {
+        /*
+        Originally each player had its own input_handler & input_thread. 
+        However, ncurses is not thread safe, and calling getch() from 
+        multiple threads led to weird results. Therefore, I moved input 
+        handling into the GameWindow class.
+        */
+        while(1) {
+            const int ch = getch();
+            player_1->handle_key_press(ch);
+            player_2->handle_key_press(ch);
+        }
+    }
 public:
-    GameWindow(){
+    GameWindow() : player_1(nullptr), player_2(nullptr) {
         initscr(); // start curses mode
         cbreak(); // disable line buffering
         keypad(stdscr, TRUE); // allow arrow & fn keys
         noecho(); // turn off echoing
-        // TODO: enable later curs_set(0); // hide the cursor 
+        curs_set(0); // hide the cursor 
 
         int max_x;
         int max_y;
@@ -145,7 +150,21 @@ public:
     };
     GameWindow(const GameWindow&) = delete;
     ~GameWindow() {
+        if (input_thread.joinable())
+            input_thread.join();
         endwin();
+    }
+
+    void set_players(shared_ptr<Player> p1, shared_ptr<Player> p2) {
+        player_1 = p1;
+        player_2 = p2;
+    }
+
+    void start() {
+        if (player_1 == nullptr || player_2 == nullptr) {
+            throw std::runtime_error("game_window::start called before setting players");
+        }
+        input_thread = std::thread(&GameWindow::input_handler, this);
     }
 
     Coordinates get_player1_start() {
@@ -154,6 +173,11 @@ public:
 
     Coordinates get_player2_start() {
         return player2_start;
+    }
+
+    void update(Coordinates p1_pos) {
+        wclear(stdscr);
+        mvwaddstr(stdscr, p1_pos.y, p1_pos.x, "1");
     }
 
     void update(Coordinates p1_pos, Coordinates p2_pos) {
@@ -169,20 +193,20 @@ public:
 
 class Game {
     GameWindow game_window;
-    Player player_1;
-    Player player_2;
+    shared_ptr<Player> player_1;
+    shared_ptr<Player> player_2;
     bool game_over;
 public:
     Game() :
-        player_1(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd'),
-        player_2(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT),
+        player_1(make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd')),
+        player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT)),
         game_over(false)
-    {}
+    {
+        game_window.set_players(player_1, player_2);
+    }
 
     void start() {
-        player_1.start(); // spin up player 1 input thread
-        player_2.start(); // spin up player 2 input thread
-
+        game_window.start(); // spin up input thread
         while (!game_over)
         {
             auto start_time = std::chrono::steady_clock::now();
@@ -201,9 +225,10 @@ public:
     }
 
     void update() {
-        Coordinates p1_pos = player_1.update();
-        Coordinates p2_pos = player_2.update();
+        Coordinates p1_pos = player_1->update();
+        Coordinates p2_pos = player_2->update();
         game_window.update(p1_pos, p2_pos);
+        // game_window.update(p1_pos);
         // TODO: check for winner
     }
 };
