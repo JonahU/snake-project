@@ -20,7 +20,6 @@ struct Coordinates { int x, y; };
 typedef std::deque<Coordinates> CoordinatesQueue;
 
 class Snake {
-
     CoordinatesQueue snake_body;
     Direction direction;
     int length;
@@ -143,12 +142,12 @@ class GameWindow
     void input_handler() {
         /*
         Originally each player had its own input_handler & input_thread. 
-        However, ncurses is not thread safe, and calling getch() from 
+        However, ncurses is not thread safe, and calling wgetch() from 
         multiple threads led to weird results. Therefore, I moved input 
         handling into the GameWindow class.
         */
         while(1) {
-            const int ch = getch();
+            const int ch = wgetch(stdscr);
             player_1->handle_key_press(ch);
             player_2->handle_key_press(ch);
         }
