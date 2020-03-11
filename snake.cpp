@@ -183,12 +183,13 @@ public:
     }
 
     void update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
-        wclear(stdscr);
+        // could be optimized to only update the head and remove the last element (if necessary)
+        wclear(stdscr); // clear the screen
         for (Coordinates pos: p1_pos) {
-            mvwaddch(stdscr, pos.y, pos.x, '1');
+            mvwaddch(stdscr, pos.y, pos.x, '1'); // draw new p1 positions
         }
         for (Coordinates pos: p2_pos) {
-            mvwaddch(stdscr, pos.y, pos.x, '2');
+            mvwaddch(stdscr, pos.y, pos.x, '2'); // draw new p2 positions
         }
     }
 
@@ -213,21 +214,21 @@ public:
 
     void start() {
         game_window.start(); // spin up input thread
-        while (!game_over)
+        while (!game_over) // main game loop
         {
             auto start_time = std::chrono::steady_clock::now();
-
-            // 1) UPDATE (producer?)
-            update();
-            // 2) RENDER (consumer?)
-            game_window.render();
-
+            update(); // update player positions
+            render(); // render updated player positions
             auto finish_time = std::chrono::steady_clock::now();
             auto time_taken = finish_time-start_time;
             auto time_taken_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_taken);
-            std::this_thread::sleep_for(50ms - time_taken_milliseconds); // 20 fps
+            std::this_thread::sleep_for(50ms - time_taken_milliseconds); // game runs at 20 frames per second
         }
         
+    }
+
+    void render() {
+        game_window.render();
     }
 
     void update() {
