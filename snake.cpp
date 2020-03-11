@@ -1,9 +1,10 @@
-#include <deque>
+#include <cctype>
 #include <chrono>
-#include <ncurses.h>
-#include <thread>
+#include <deque>
 #include <memory>
+#include <ncurses.h>
 #include <stdexcept>
+#include <thread>
 
 #include <iostream> // TODO: remove later
 
@@ -45,6 +46,14 @@ class Snake {
         }
         return next_pos;
     }
+
+    Direction get_opposite(Direction dir) {
+        if (dir == Direction::Up) return Direction::Down;
+        else if (dir == Direction::Down) return Direction::Up;
+        else if (dir == Direction::Left) return Direction::Right;
+        else if (dir == Direction::Right) return Direction::Left;
+        else return Direction::None;
+    }
 public:
     Snake(Coordinates start_pos, Direction start_dir, int len) :length(len), direction(start_dir) {
         snake_body.push_front(start_pos);
@@ -60,7 +69,8 @@ public:
     }
 
     void change_direction(Direction new_dir) {
-        direction = new_dir;
+        if (new_dir != get_opposite(direction))
+            direction = new_dir;
     }
 
     void move() {
@@ -96,13 +106,13 @@ public:
     {}
     
     void handle_key_press(const int input_ch) {
-        if(input_ch == key_up) {
+        if(input_ch == key_up || input_ch == toupper(key_up)) {
             my_snake.change_direction(Direction::Up);
-        } else if (input_ch == key_down) {
+        } else if (input_ch == key_down || input_ch == toupper(key_down)) {
             my_snake.change_direction(Direction::Down);
-        } else if (input_ch == key_left) {
+        } else if (input_ch == key_left || input_ch == toupper(key_left)) {
             my_snake.change_direction(Direction::Left);
-        } else if (input_ch == key_right) {
+        } else if (input_ch == key_right || input_ch == toupper(key_right)) {
             my_snake.change_direction(Direction::Right);
         }
     }
@@ -124,6 +134,10 @@ class GameWindow
     std::thread input_thread;
     shared_ptr<Player> player_1;
     shared_ptr<Player> player_2;
+    int P1_COLOR_PAIR = 1;
+    int P2_COLOR_PAIR = 2;
+    int BACKGROUND_COLOR_PAIR = 3;
+    int COLLISION_COLOR_PAIR = 4;
 
     void input_handler() {
         /*
@@ -140,12 +154,25 @@ class GameWindow
     }
 public:
     GameWindow() : player_1(nullptr), player_2(nullptr) {
+        // Initalize curses
         initscr(); // start curses mode
         cbreak(); // disable line buffering
         keypad(stdscr, TRUE); // allow arrow & fn keys
         noecho(); // turn off echoing
-        curs_set(0); // hide the cursor 
+        curs_set(0); // hide the cursor
 
+        // Initialize colors
+        if (has_colors() == FALSE) {
+            throw std::runtime_error("Your terminal does not support color");
+        }
+        start_color();
+        init_pair(P1_COLOR_PAIR, COLOR_WHITE, COLOR_GREEN); // (index, foreground, background)
+        init_pair(P2_COLOR_PAIR, COLOR_BLACK, COLOR_BLUE);
+        init_pair(BACKGROUND_COLOR_PAIR, COLOR_BLACK, COLOR_WHITE);
+        init_pair(COLLISION_COLOR_PAIR, COLOR_RED, COLOR_RED);
+        wbkgd(stdscr, COLOR_PAIR(BACKGROUND_COLOR_PAIR)); // set window to background color
+
+        // Calculate player starting positions 
         int max_x;
         int max_y;
         getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
@@ -185,12 +212,16 @@ public:
     void update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
         // could be optimized to only update the head and remove the last element (if necessary)
         wclear(stdscr); // clear the screen
+        attron(COLOR_PAIR(P1_COLOR_PAIR));
         for (Coordinates pos: p1_pos) {
-            mvwaddch(stdscr, pos.y, pos.x, '1'); // draw new p1 positions
+            mvwaddch(stdscr, pos.y, pos.x, ' '); // draw new p1 positions
         }
+        attroff(COLOR_PAIR(P1_COLOR_PAIR));
+        attron(COLOR_PAIR(P2_COLOR_PAIR));
         for (Coordinates pos: p2_pos) {
-            mvwaddch(stdscr, pos.y, pos.x, '2'); // draw new p2 positions
+            mvwaddch(stdscr, pos.y, pos.x, ' '); // draw new p2 positions
         }
+        attroff(COLOR_PAIR(P2_COLOR_PAIR));
     }
 
     void render() {
