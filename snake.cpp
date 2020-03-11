@@ -137,7 +137,8 @@ class GameWindow
     int P1_COLOR_PAIR = 1;
     int P2_COLOR_PAIR = 2;
     int BACKGROUND_COLOR_PAIR = 3;
-    int COLLISION_COLOR_PAIR = 4;
+    int BORDER_COLOR_PAIR = 4;
+    int COLLISION_COLOR_PAIR = 5;
 
     void input_handler() {
         /*
@@ -168,7 +169,8 @@ public:
         start_color();
         init_pair(P1_COLOR_PAIR, COLOR_WHITE, COLOR_GREEN); // (index, foreground, background)
         init_pair(P2_COLOR_PAIR, COLOR_BLACK, COLOR_BLUE);
-        init_pair(BACKGROUND_COLOR_PAIR, COLOR_BLACK, COLOR_WHITE);
+        init_pair(BACKGROUND_COLOR_PAIR, COLOR_WHITE, COLOR_BLACK);
+        init_pair(BORDER_COLOR_PAIR, COLOR_BLACK, COLOR_WHITE);
         init_pair(COLLISION_COLOR_PAIR, COLOR_RED, COLOR_RED);
         wbkgd(stdscr, COLOR_PAIR(BACKGROUND_COLOR_PAIR)); // set window to background color
 
@@ -209,9 +211,26 @@ public:
         return player2_start;
     }
 
+    void draw_border() {
+        attron(COLOR_PAIR(BORDER_COLOR_PAIR));
+        wborder(
+            stdscr, // window to draw border on
+            ' ', // left side
+            ' ', // right side
+            ' ', // top side
+            ' ', // bottom side
+            ' ', // top left corner
+            ' ', // top right corner
+            ' ', // bottom left corner
+            ' '  // bottom right corner
+        );
+        attroff(COLOR_PAIR(BORDER_COLOR_PAIR));
+    }
+
     void update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
         // could be optimized to only update the head and remove the last element (if necessary)
         wclear(stdscr); // clear the screen
+        draw_border(); // draw screen border
         attron(COLOR_PAIR(P1_COLOR_PAIR));
         for (Coordinates pos: p1_pos) {
             mvwaddch(stdscr, pos.y, pos.x, ' '); // draw new p1 positions
