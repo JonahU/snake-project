@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <deque>
@@ -9,6 +10,7 @@
 #include <iostream> // TODO: remove later
 
 using namespace std::literals::chrono_literals;
+using std::find;
 using std::shared_ptr;
 using std::make_shared;
 
@@ -16,8 +18,18 @@ enum class Direction {
     None, Up, Down, Left, Right
 };
 
-struct Coordinates { int x, y; };
+struct Coordinates {
+    int x, y;
+    friend bool operator==(const Coordinates& lhs, const Coordinates& rhs);
+};
 typedef std::deque<Coordinates> CoordinatesQueue;
+
+bool operator==(const Coordinates& lhs, const Coordinates& rhs){
+    if ((lhs.x == rhs.x) && (lhs.y == rhs.y)) {
+        return true;
+    }
+    return false;
+}
 
 class Snake {
     CoordinatesQueue snake_body;
@@ -128,11 +140,9 @@ public:
 
 class GameWindow
 {
-    Coordinates player1_start;
-    Coordinates player2_start;
+    Coordinates player1_start, player2_start;
     std::thread input_thread;
-    shared_ptr<Player> player_1;
-    shared_ptr<Player> player_2;
+    shared_ptr<Player> player_1, player_2;
     int P1_COLOR_PAIR = 1;
     int P2_COLOR_PAIR = 2;
     int BACKGROUND_COLOR_PAIR = 3;
@@ -166,8 +176,8 @@ public:
             throw std::runtime_error("Your terminal does not support color");
         }
         start_color();
-        init_pair(P1_COLOR_PAIR, COLOR_WHITE, COLOR_GREEN); // (index, foreground, background)
-        init_pair(P2_COLOR_PAIR, COLOR_BLACK, COLOR_BLUE);
+        init_pair(P1_COLOR_PAIR, COLOR_GREEN, COLOR_GREEN); // (index, foreground, background)
+        init_pair(P2_COLOR_PAIR, COLOR_BLUE, COLOR_BLUE);
         init_pair(BACKGROUND_COLOR_PAIR, COLOR_WHITE, COLOR_BLACK);
         init_pair(BORDER_COLOR_PAIR, COLOR_BLACK, COLOR_WHITE);
         init_pair(COLLISION_COLOR_PAIR, COLOR_RED, COLOR_RED);
@@ -226,10 +236,37 @@ public:
         attroff(COLOR_PAIR(BORDER_COLOR_PAIR));
     }
 
-    void update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
-        // could be optimized to only update the head and remove the last element (if necessary)
+    bool did_player_collide(CoordinatesQueue const& player_pos, CoordinatesQueue const& other_player_pos) {
+        const Coordinates next_pos = player_pos.front();
+        const int next_square_color = mvwinch(stdscr, next_pos.y, next_pos.x) & A_COLOR;
+        
+        // check if collided with a border square
+        if (next_square_color == COLOR_PAIR(BORDER_COLOR_PAIR)) {
+            return true;
+        }
+        // check if collided with self
+        if (find(player_pos.begin()+1, player_pos.end(), next_pos) != player_pos.end()) {
+            return true;
+        }
+        // check if collided with other player
+        if (find(other_player_pos.begin(), other_player_pos.end(), next_pos) != other_player_pos.end()) {
+            return true;
+        }
+        // else player did not collide
+        return false;
+    }
+
+    int update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
+        // check for collisions
+        bool p1_collided = did_player_collide(p1_pos, p2_pos);
+        bool p2_collided = did_player_collide(p2_pos, p1_pos);
+        // TODO: draw collision
+
         wclear(stdscr); // clear the screen
         draw_border(); // draw screen border
+
+        // must redraw every player position every update
+        // as wclear copies blanks to every position in the window
         attron(COLOR_PAIR(P1_COLOR_PAIR));
         for (Coordinates pos: p1_pos) {
             mvwaddch(stdscr, pos.y, pos.x, ' '); // draw new p1 positions
@@ -240,9 +277,36 @@ public:
             mvwaddch(stdscr, pos.y, pos.x, ' '); // draw new p2 positions
         }
         attroff(COLOR_PAIR(P2_COLOR_PAIR));
+
+        if (p1_collided && p2_collided) {
+            return 0; // draw
+        } else if (p1_collided && !p2_collided) {
+            return 2; // p1 lost, winner is p2
+        } else if (p2_collided && !p1_collided) {
+            return 1; // p2 lost, winner is p1
+        }
+        return -1; // no winner yet
     }
 
     void render() {
+        wrefresh(stdscr);
+    }
+
+    void renderGameOverScreen(int winner) {
+        switch (winner) {
+        case 2:
+             mvwprintw(stdscr, 1, 1, "BLUE WON!");
+            break;
+        case 1:
+             mvwprintw(stdscr, 1, 1, "GREEN WON!");
+             break;
+        case 0:
+            mvwprintw(stdscr, 1, 1, "IT WAS A DRAW!");
+            break;
+        default:
+            mvwprintw(stdscr, 1, 1, "THE GAME ENDED WITH NO WINNER.");
+            break;
+        }
         wrefresh(stdscr);
     }
 };
@@ -252,11 +316,13 @@ class Game {
     shared_ptr<Player> player_1;
     shared_ptr<Player> player_2;
     bool game_over;
+    int winner; // -1 = none, 0 = draw, 1 = player_1, 2 = player_2 etc.
 public:
     Game() :
         player_1(make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd')),
         player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT)),
-        game_over(false)
+        game_over(false),
+        winner(-1)
     {
         game_window.set_players(player_1, player_2);
     }
@@ -273,18 +339,23 @@ public:
             auto time_taken_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_taken);
             std::this_thread::sleep_for(50ms - time_taken_milliseconds); // game runs at 20 frames per second
         }
-        
     }
 
     void render() {
-        game_window.render();
+        if (game_over) {
+            game_window.renderGameOverScreen(winner);
+        } else {
+            game_window.render();
+        }
     }
 
     void update() {
         CoordinatesQueue const& p1_pos = player_1->update();
         CoordinatesQueue const& p2_pos = player_2->update();
-        game_window.update(p1_pos, p2_pos);
-        // TODO: check for winner
+        winner = game_window.update(p1_pos, p2_pos);
+        if (winner != -1) {
+            game_over = true;
+        }
     }
 };
 
