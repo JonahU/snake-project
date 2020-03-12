@@ -6,6 +6,7 @@
 #include <ncurses.h>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include <iostream> // TODO: remove later
 
@@ -162,6 +163,7 @@ class GameWindow
     int initial_height, initial_width;
     std::thread input_thread;
     shared_ptr<Player> player_1, player_2;
+    std::vector<Coordinates> collision_pos;
     int P1_COLOR_PAIR = 1;
     int P2_COLOR_PAIR = 2;
     int BACKGROUND_COLOR_PAIR = 3;
@@ -212,7 +214,7 @@ public:
         player1_start = {quarter_x, half_y};
         player2_start = {three_quarter_x, half_y};
 
-        // Set initial height & width (used to calculate starting snake length)
+        // Set initial height & width (width used to calculate starting snake length)
         initial_height = max_y - 3; // (x axis-1) -2 [border height]
         initial_width = max_x - 3; // (y axis-1) - 2 [border width]
     };
@@ -268,30 +270,34 @@ public:
     }
 
     bool did_player_collide(CoordinatesQueue const& player_pos, CoordinatesQueue const& other_player_pos) {
+        bool did_collide = false;
         const Coordinates next_pos = player_pos.front();
         const int next_square_color = mvwinch(stdscr, next_pos.y, next_pos.x) & A_COLOR;
         
         // check if collided with a border square
         if (next_square_color == COLOR_PAIR(BORDER_COLOR_PAIR)) {
-            return true;
+            did_collide = true;
         }
         // check if collided with self
         if (find(player_pos.begin()+1, player_pos.end(), next_pos) != player_pos.end()) {
-            return true;
+            did_collide = true;
         }
         // check if collided with other player
         if (find(other_player_pos.begin(), other_player_pos.end(), next_pos) != other_player_pos.end()) {
-            return true;
+            did_collide = true;
         }
         // else player did not collide
-        return false;
+
+        if (did_collide) {
+            collision_pos.push_back(next_pos);
+        }
+        return did_collide;
     }
 
     int update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
         // check for collisions
         bool p1_collided = did_player_collide(p1_pos, p2_pos);
         bool p2_collided = did_player_collide(p2_pos, p1_pos);
-        // TODO: draw collision
 
         wclear(stdscr); // clear the screen
         draw_border(); // draw screen border
@@ -309,12 +315,21 @@ public:
         }
         attroff(COLOR_PAIR(P2_COLOR_PAIR));
 
-        if (p1_collided && p2_collided) {
-            return 0; // draw
-        } else if (p1_collided && !p2_collided) {
-            return 2; // p1 lost, winner is p2
-        } else if (p2_collided && !p1_collided) {
-            return 1; // p2 lost, winner is p1
+        // draw collision and return winner if a player collided
+        if (p1_collided || p2_collided) {
+            for (Coordinates pos : collision_pos) {
+                attron(COLOR_PAIR(COLLISION_COLOR_PAIR));
+                mvwaddch(stdscr, pos.y, pos.x, ' '); // draw collision square red
+                attroff(COLOR_PAIR(COLLISION_COLOR_PAIR));
+            }
+
+            if (p1_collided && p2_collided) {
+                return 0; // draw
+            } else if (p1_collided && !p2_collided) {
+                return 2; // p1 lost, winner is p2
+            } else if (p2_collided && !p1_collided) {
+                return 1; // p2 lost, winner is p1
+            }
         }
         return -1; // no winner yet
     }
