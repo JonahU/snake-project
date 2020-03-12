@@ -9,6 +9,8 @@
 
 #include <iostream> // TODO: remove later
 
+#define FRAMES_PER_SECOND 20
+
 using namespace std::literals::chrono_literals;
 using std::find;
 using std::shared_ptr;
@@ -90,6 +92,17 @@ public:
         }
         snake_body.push_front(get_next_pos());
     }
+
+    void move(int const& frames_elapsed) {
+        if ((frames_elapsed % (2*FRAMES_PER_SECOND)) == 0) {
+            // 2 * 20fps, every 2 seconds increase length by 1
+            ++length;
+        }
+        if(snake_body.size() == length) {
+            snake_body.pop_back();
+        }
+        snake_body.push_front(get_next_pos());
+    }
 };
 
 class Player {
@@ -133,6 +146,11 @@ public:
         return my_snake.get_body();
     }
 
+    CoordinatesQueue const& update(int const& frames_elapsed) {
+        my_snake.move(frames_elapsed);
+        return my_snake.get_body();
+    }
+
     int who() {
         return identifier;
     }
@@ -141,6 +159,7 @@ public:
 class GameWindow
 {
     Coordinates player1_start, player2_start;
+    int initial_height, initial_width;
     std::thread input_thread;
     shared_ptr<Player> player_1, player_2;
     int P1_COLOR_PAIR = 1;
@@ -192,6 +211,10 @@ public:
         int three_quarter_x = quarter_x*3;
         player1_start = {quarter_x, half_y};
         player2_start = {three_quarter_x, half_y};
+
+        // Set initial height & width (used to calculate starting snake length)
+        initial_height = max_y - 3; // (x axis-1) -2 [border height]
+        initial_width = max_x - 3; // (y axis-1) - 2 [border width]
     };
     GameWindow(const GameWindow&) = delete;
     ~GameWindow() {
@@ -212,12 +235,20 @@ public:
         input_thread = std::thread(&GameWindow::input_handler, this);
     }
 
-    Coordinates get_player1_start() {
+    const Coordinates get_player1_start() {
         return player1_start;
     }
 
-    Coordinates get_player2_start() {
+    const Coordinates get_player2_start() {
         return player2_start;
+    }
+
+    const int get_initial_height() {
+        return initial_height;
+    }
+
+    const int get_initial_width() {
+        return initial_width;
     }
 
     void draw_border() {
@@ -293,6 +324,7 @@ public:
     }
 
     void renderGameOverScreen(int winner) {
+        // TODO: make this better
         switch (winner) {
         case 2:
              mvwprintw(stdscr, 1, 1, "BLUE WON!");
@@ -317,12 +349,14 @@ class Game {
     shared_ptr<Player> player_2;
     bool game_over;
     int winner; // -1 = none, 0 = draw, 1 = player_1, 2 = player_2 etc.
+    unsigned long frame_count;
 public:
     Game() :
-        player_1(make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd')),
-        player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT)),
+        player_1(make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5)),
+        player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5)),
         game_over(false),
-        winner(-1)
+        winner(-1),
+        frame_count(0)
     {
         game_window.set_players(player_1, player_2);
     }
@@ -337,7 +371,8 @@ public:
             auto finish_time = std::chrono::steady_clock::now();
             auto time_taken = finish_time-start_time;
             auto time_taken_milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(time_taken);
-            std::this_thread::sleep_for(50ms - time_taken_milliseconds); // game runs at 20 frames per second
+            std::this_thread::sleep_for(1000ms/FRAMES_PER_SECOND - time_taken_milliseconds); // run loop every 50ms
+            ++frame_count;
         }
     }
 
@@ -350,8 +385,8 @@ public:
     }
 
     void update() {
-        CoordinatesQueue const& p1_pos = player_1->update();
-        CoordinatesQueue const& p2_pos = player_2->update();
+        CoordinatesQueue const& p1_pos = player_1->update(frame_count);
+        CoordinatesQueue const& p2_pos = player_2->update(frame_count);
         winner = game_window.update(p1_pos, p2_pos);
         if (winner != -1) {
             game_over = true;
