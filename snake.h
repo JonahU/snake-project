@@ -180,20 +180,6 @@ class GameWindow
     int BORDER_COLOR_PAIR = 4;
     int COLLISION_COLOR_PAIR = 5;
 
-    void input_handler() {
-        /*
-        Originally each player had its own input_handler & input_thread. 
-        However, ncurses is not thread safe, and calling wgetch() from 
-        multiple threads led to weird results. Therefore, I moved input 
-        handling into the GameWindow class.
-        */
-        while(1) {
-            const int ch = wgetch(stdscr);
-            player_1->handle_key_press(ch);
-            player_2->handle_key_press(ch);
-        }
-    }
-public:
     GameWindow() : player_1(nullptr), player_2(nullptr) {
         // Initalize curses
         initscr(); // start curses mode
@@ -228,11 +214,35 @@ public:
         initial_height = max_y - 3; // (x axis-1) -2 [border height]
         initial_width = max_x - 3; // (y axis-1) - 2 [border width]
     };
+    
     GameWindow(const GameWindow&) = delete;
+    GameWindow(GameWindow&&) = delete;
+    GameWindow& operator=(const GameWindow&) = delete;
+    GameWindow& operator=(GameWindow&&) = delete;
+
     ~GameWindow() {
         if (input_thread.joinable())
             input_thread.join();
         endwin(); // end curses mode
+    }
+
+    void input_handler() {
+        /*
+        Originally each player had its own input_handler & input_thread. 
+        However, ncurses is not thread safe, and calling wgetch() from 
+        multiple threads led to weird results. Therefore, I moved input 
+        handling into the GameWindow class.
+        */
+        while(1) {
+            const int ch = wgetch(stdscr);
+            player_1->handle_key_press(ch);
+            player_2->handle_key_press(ch);
+        }
+    }
+public:
+    static GameWindow& get_instance() {
+        static GameWindow single_instance; // GameWindow is a singleton
+        return single_instance;
     }
 
     void set_players(shared_ptr<Player> p1, shared_ptr<Player> p2) {
@@ -369,7 +379,7 @@ public:
 };
 
 class Game {
-    GameWindow game_window;
+    GameWindow& game_window;
     shared_ptr<Player> player_1;
     shared_ptr<Player> player_2;
     bool game_over;
@@ -377,6 +387,7 @@ class Game {
     unsigned long frame_count;
 public:
     Game() :
+        game_window(GameWindow::get_instance()),
         player_1(make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5)),
         player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5)),
         game_over(false),
