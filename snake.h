@@ -227,7 +227,7 @@ class GameWindow
     GameWindow& operator=(GameWindow&&) = delete;
 
     ~GameWindow() {
-        read_usr_input = false; // if true, thread will never join
+        read_usr_input.store(false); // if true, thread will never join
         if (input_thread.joinable())
             input_thread.join();
         endwin(); // end curses mode
@@ -241,7 +241,7 @@ class GameWindow
         handling into the GameWindow class.
         */
         int ch;
-        while (read_usr_input) {
+        while (read_usr_input.load()) {
             ch = wgetch(stdscr);
             player_1->handle_key_press(ch);
             player_2->handle_key_press(ch);
@@ -303,7 +303,9 @@ public:
     void start() {
         if (player_1 == nullptr || player_2 == nullptr)
             throw std::runtime_error("game_window::start called before setting players");
-        read_usr_input = true;
+
+        // start reading user keyboard input
+        read_usr_input.store(true);
         if (!input_thread.joinable()) {
             std::promise<int> last_char_input_p;
             last_char_typed_f = last_char_input_p.get_future();
@@ -312,7 +314,7 @@ public:
     }
 
     bool play_again() {
-        read_usr_input = false;
+        read_usr_input.store(false);
         int last_char_typed = last_char_typed_f.get();
         input_thread.join();
         switch (last_char_typed) {
