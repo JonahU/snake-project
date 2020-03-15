@@ -2,14 +2,17 @@
 #define SNAKE_H
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <deque>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <ncurses.h>
 #include <shared_mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -173,6 +176,8 @@ class GameWindow
     Coordinates player1_start, player2_start;
     int initial_height, initial_width;
     std::thread input_thread;
+    inline static std::atomic<bool> read_usr_input;
+    std::future<int> last_char_typed_f;
     shared_ptr<Player> player_1, player_2;
     std::vector<Coordinates> collision_pos;
     int P1_COLOR_PAIR = 1;
@@ -198,7 +203,7 @@ class GameWindow
         init_pair(P2_COLOR_PAIR, COLOR_BLUE, COLOR_BLUE);
         init_pair(BACKGROUND_COLOR_PAIR, COLOR_WHITE, COLOR_BLACK);
         init_pair(BORDER_COLOR_PAIR, COLOR_BLACK, COLOR_WHITE);
-        init_pair(COLLISION_COLOR_PAIR, COLOR_RED, COLOR_RED);
+        init_pair(COLLISION_COLOR_PAIR, COLOR_BLACK, COLOR_RED);
         wbkgd(stdscr, COLOR_PAIR(BACKGROUND_COLOR_PAIR)); // set window to background color
 
         // Calculate player starting positions 
@@ -222,26 +227,29 @@ class GameWindow
     GameWindow& operator=(GameWindow&&) = delete;
 
     ~GameWindow() {
+        read_usr_input = false; // if true, thread will never join
         if (input_thread.joinable())
             input_thread.join();
         endwin(); // end curses mode
     }
 
-    void input_handler() const {
+    void input_handler(std::promise<int>&& final_ch_promise) const {
         /*
         Originally each player had its own input_handler & input_thread. 
         However, ncurses is not thread safe, and calling wgetch() from 
         multiple threads led to weird results. Therefore, I moved input 
         handling into the GameWindow class.
         */
-        while (1) {
-            const int ch = wgetch(stdscr);
+        int ch;
+        while (read_usr_input) {
+            ch = wgetch(stdscr);
             player_1->handle_key_press(ch);
             player_2->handle_key_press(ch);
         }
+        final_ch_promise.set_value(ch);
     }
 
-        void draw_border() {
+    void draw_border() {
         attron(COLOR_PAIR(BORDER_COLOR_PAIR));
         wborder(
             stdscr, // window to draw border on
@@ -295,26 +303,25 @@ public:
     void start() {
         if (player_1 == nullptr || player_2 == nullptr)
             throw std::runtime_error("game_window::start called before setting players");
-        if (!input_thread.joinable())
-            input_thread = std::thread(&GameWindow::input_handler, this);
+        read_usr_input = true;
+        if (!input_thread.joinable()) {
+            std::promise<int> last_char_input_p;
+            last_char_typed_f = last_char_input_p.get_future();
+            input_thread = std::thread(&GameWindow::input_handler, this, std::move(last_char_input_p));
+        }
     }
 
     bool play_again() {
+        read_usr_input = false;
+        int last_char_typed = last_char_typed_f.get();
         input_thread.join();
-        while (1) {
-            const int usr_key_press = wgetch(stdscr);
-            switch (usr_key_press) {
-                case 'R':
-                case 'r':
-                    return true; // restart
-                case 'Q': 
-                case 'q':
-                    return false; // quit
-                default:
-                    break;
-            }
-        };
-        
+        switch (last_char_typed) {
+            case 'Q': 
+            case 'q':
+                return false; // quit
+            default:
+                return true; // restart
+        }
     }
 
     Coordinates get_player1_start() const {
@@ -378,21 +385,27 @@ public:
     }
 
     void renderGameOverScreen(int winner) {
-        // TODO: make this better
+        int max_x, max_y;
+        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
+
+        attron(COLOR_PAIR(BORDER_COLOR_PAIR));
         switch (winner) {
         case 2:
-             mvwprintw(stdscr, 1, 1, "BLUE WON!");
+             mvwprintw(stdscr, 0, 1, "BLUE WON!");
             break;
         case 1:
-             mvwprintw(stdscr, 1, 1, "GREEN WON!");
+             mvwprintw(stdscr, 0, 1, "GREEN WON!");
              break;
         case 0:
-            mvwprintw(stdscr, 1, 1, "IT WAS A DRAW!");
+            mvwprintw(stdscr, 0, 1, "IT WAS A DRAW!");
             break;
         default:
-            mvwprintw(stdscr, 1, 1, "THE GAME ENDED WITH NO WINNER.");
+            mvwprintw(stdscr, 0, 1, "THE GAME ENDED WITH NO WINNER.");
             break;
         }
+        std::string quit_text = "PRESS 'q' TO QUIT";
+        mvwprintw(stdscr, max_y-1, max_x-1-quit_text.length(), quit_text.c_str());
+        attroff(COLOR_PAIR(BORDER_COLOR_PAIR));
         wrefresh(stdscr);
     }
 };
@@ -434,6 +447,7 @@ public:
         game_window.set_players(player_1, player_2);
     }
 
+    // TODO: set game_over back to false + handle new game
     void start() {
         game_window.start(); // spin up input thread
         while (!game_over) // main game loop
