@@ -10,11 +10,14 @@ using std::exception;
 
 int main() {
     Game game;
-    try {
-        game.start();
-    } catch (exception& err) {
-        cout << err.what() << endl;
-        return -1;
-    }
+    do {
+        try {
+            game.start();
+        } catch (exception& err) {
+            cout << err.what() << endl;
+            return -1;
+        }
+    } while (!game.user_quit());
+
     return 0;
 }

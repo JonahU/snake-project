@@ -28,6 +28,14 @@ enum class Direction {
     None, Up, Down, Left, Right
 };
 
+Direction get_opposite(Direction dir) {
+    if (dir == Direction::Up) return Direction::Down;
+    else if (dir == Direction::Down) return Direction::Up;
+    else if (dir == Direction::Left) return Direction::Right;
+    else if (dir == Direction::Right) return Direction::Left;
+    else return Direction::None;
+}
+
 struct Coordinates {
     int x, y;
     friend bool operator==(Coordinates const& lhs, Coordinates const& rhs);
@@ -70,23 +78,16 @@ class Snake {
         return next_pos;
     }
 
-    Direction get_opposite(Direction dir) {
-        if (dir == Direction::Up) return Direction::Down;
-        else if (dir == Direction::Down) return Direction::Up;
-        else if (dir == Direction::Left) return Direction::Right;
-        else if (dir == Direction::Right) return Direction::Left;
-        else return Direction::None;
-    }
 public:
     Snake(Coordinates start_pos, Direction start_dir, int len) :length(len), direction(start_dir) {
         snake_body.push_front(start_pos);
     }
 
-    Coordinates const& get_head() {
+    Coordinates const& get_head() const {
         return snake_body.front();
     }
 
-    CoordinatesQueue const& get_body() {
+    CoordinatesQueue const& get_body() const {
         // body includes head
         return snake_body;
     }
@@ -162,7 +163,7 @@ public:
         return my_snake.get_body();
     }
 
-    int who() {
+    int who() const {
         return identifier;
     }
 };
@@ -214,7 +215,7 @@ class GameWindow
         initial_height = max_y - 3; // (x axis-1) -2 [border height]
         initial_width = max_x - 3; // (y axis-1) - 2 [border width]
     };
-    
+
     GameWindow(const GameWindow&) = delete;
     GameWindow(GameWindow&&) = delete;
     GameWindow& operator=(const GameWindow&) = delete;
@@ -226,54 +227,21 @@ class GameWindow
         endwin(); // end curses mode
     }
 
-    void input_handler() {
+    void input_handler() const {
         /*
         Originally each player had its own input_handler & input_thread. 
         However, ncurses is not thread safe, and calling wgetch() from 
         multiple threads led to weird results. Therefore, I moved input 
         handling into the GameWindow class.
         */
-        while(1) {
+        while (1) {
             const int ch = wgetch(stdscr);
             player_1->handle_key_press(ch);
             player_2->handle_key_press(ch);
         }
     }
-public:
-    static GameWindow& get_instance() {
-        static GameWindow single_instance; // GameWindow is a singleton
-        return single_instance;
-    }
 
-    void set_players(shared_ptr<Player> p1, shared_ptr<Player> p2) {
-        player_1 = p1;
-        player_2 = p2;
-    }
-
-    void start() {
-        if (player_1 == nullptr || player_2 == nullptr) {
-            throw std::runtime_error("game_window::start called before setting players");
-        }
-        input_thread = std::thread(&GameWindow::input_handler, this);
-    }
-
-    const Coordinates get_player1_start() {
-        return player1_start;
-    }
-
-    const Coordinates get_player2_start() {
-        return player2_start;
-    }
-
-    const int get_initial_height() {
-        return initial_height;
-    }
-
-    const int get_initial_width() {
-        return initial_width;
-    }
-
-    void draw_border() {
+        void draw_border() {
         attron(COLOR_PAIR(BORDER_COLOR_PAIR));
         wborder(
             stdscr, // window to draw border on
@@ -312,6 +280,57 @@ public:
             collision_pos.push_back(next_pos);
         }
         return did_collide;
+    }
+public:
+    static GameWindow& get_instance() {
+        static GameWindow single_instance; // GameWindow is a singleton
+        return single_instance;
+    }
+
+    void set_players(shared_ptr<Player> p1, shared_ptr<Player> p2) {
+        player_1 = p1;
+        player_2 = p2;
+    }
+
+    void start() {
+        if (player_1 == nullptr || player_2 == nullptr)
+            throw std::runtime_error("game_window::start called before setting players");
+        if (!input_thread.joinable())
+            input_thread = std::thread(&GameWindow::input_handler, this);
+    }
+
+    bool play_again() {
+        input_thread.join();
+        while (1) {
+            const int usr_key_press = wgetch(stdscr);
+            switch (usr_key_press) {
+                case 'R':
+                case 'r':
+                    return true; // restart
+                case 'Q': 
+                case 'q':
+                    return false; // quit
+                default:
+                    break;
+            }
+        };
+        
+    }
+
+    Coordinates get_player1_start() const {
+        return player1_start;
+    }
+
+    Coordinates get_player2_start() const {
+        return player2_start;
+    }
+
+    int get_initial_height() const {
+        return initial_height;
+    }
+
+    int get_initial_width() const {
+        return initial_width;
     }
 
     int update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
@@ -382,15 +401,33 @@ class Game {
     GameWindow& game_window;
     shared_ptr<Player> player_1;
     shared_ptr<Player> player_2;
-    bool game_over;
+    bool game_over, play_again;
     int winner; // -1 = none, 0 = draw, 1 = player_1, 2 = player_2 etc.
     unsigned long frame_count;
+
+    void render() {
+        if (game_over) {
+            game_window.renderGameOverScreen(winner);
+        } else {
+            game_window.render();
+        }
+    }
+
+    void update() {
+        CoordinatesQueue const& p1_pos = player_1->update(frame_count);
+        CoordinatesQueue const& p2_pos = player_2->update(frame_count);
+        winner = game_window.update(p1_pos, p2_pos);
+        if (winner != -1) {
+            game_over = true;
+        }
+    }
 public:
     Game() :
         game_window(GameWindow::get_instance()),
         player_1(make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5)),
         player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5)),
         game_over(false),
+        play_again(false),
         winner(-1),
         frame_count(0)
     {
@@ -410,23 +447,11 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(1000)/FRAMES_PER_SECOND - time_taken_milliseconds); // run loop every 50ms
             ++frame_count;
         }
+        play_again = game_window.play_again();
     }
 
-    void render() {
-        if (game_over) {
-            game_window.renderGameOverScreen(winner);
-        } else {
-            game_window.render();
-        }
-    }
-
-    void update() {
-        CoordinatesQueue const& p1_pos = player_1->update(frame_count);
-        CoordinatesQueue const& p2_pos = player_2->update(frame_count);
-        winner = game_window.update(p1_pos, p2_pos);
-        if (winner != -1) {
-            game_over = true;
-        }
+    bool user_quit() {
+        return !play_again;
     }
 };
 }
