@@ -24,6 +24,7 @@ using std::make_shared;
 using std::shared_mutex;
 using std::shared_lock;
 using std::unique_lock;
+using std::exception;
 
 namespace snake {
 
@@ -42,6 +43,10 @@ Direction get_opposite(Direction dir) {
 struct Coordinates {
     int x, y;
     friend bool operator==(Coordinates const& lhs, Coordinates const& rhs);
+    bool operator<(Coordinates const& rhs) {
+        if (y != rhs.y) return y < rhs.y;
+        else return x < rhs.x;
+    }
 };
 using CoordinatesQueue =  std::deque<Coordinates>;
 
@@ -95,6 +100,7 @@ public:
         return snake_body;
     }
 
+    // TODO: fix bug where can turn into body with quick presses
     void change_direction(Direction new_dir) {
         unique_lock ulock(direction_mutex); // only one writer allowed
         if (new_dir != get_opposite(direction))
@@ -185,6 +191,7 @@ class GameWindow
     int BACKGROUND_COLOR_PAIR = 3;
     int BORDER_COLOR_PAIR = 4;
     int COLLISION_COLOR_PAIR = 5;
+    int ERROR_COLOR_PAIR = 6;
 
     GameWindow() : player_1(nullptr), player_2(nullptr) {
         // Initalize curses
@@ -203,7 +210,8 @@ class GameWindow
         init_pair(P2_COLOR_PAIR, COLOR_BLUE, COLOR_BLUE);
         init_pair(BACKGROUND_COLOR_PAIR, COLOR_WHITE, COLOR_BLACK);
         init_pair(BORDER_COLOR_PAIR, COLOR_BLACK, COLOR_WHITE);
-        init_pair(COLLISION_COLOR_PAIR, COLOR_BLACK, COLOR_RED);
+        init_pair(COLLISION_COLOR_PAIR, COLOR_WHITE, COLOR_RED);
+        init_pair(ERROR_COLOR_PAIR, COLOR_RED, COLOR_WHITE);
         wbkgd(stdscr, COLOR_PAIR(BACKGROUND_COLOR_PAIR)); // set window to background color
 
         // Calculate player starting positions 
@@ -317,28 +325,40 @@ public:
         read_usr_input.store(false);
         int last_char_typed = last_char_typed_f.get();
         input_thread.join();
-        switch (last_char_typed) {
-            case 'Q': 
-            case 'q':
-                return false; // quit
-            default:
-                return true; // restart
-        }
+        do {
+            // keep reading ignoring input until user quits or restarts game
+            switch (last_char_typed) {
+                case 'Q': 
+                case 'q':
+                    return false; // quit
+                case 'R':
+                case 'r':
+                    collision_pos.clear(); // reset collision vector for next game
+                    return true; // restart
+                default:
+                    break; // do nothing
+            }
+            last_char_typed = wgetch(stdscr);
+        } while (1);
     }
 
     Coordinates get_player1_start() const {
+        // TODO: calculate on call so if window size changes, new start pos
         return player1_start;
     }
 
     Coordinates get_player2_start() const {
+        // TODO: calculate on call so if window size changes, new start pos
         return player2_start;
     }
 
     int get_initial_height() const {
+        // TODO: calculate on call so if window size changes, updated value
         return initial_height;
     }
 
     int get_initial_width() const {
+        // TODO: calculate on call so if window size changes, updated value
         return initial_width;
     }
 
@@ -386,29 +406,71 @@ public:
         wrefresh(stdscr);
     }
 
-    void renderGameOverScreen(int winner) {
+    void render_game_over_screen(int winner) {
         int max_x, max_y;
         getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
 
-        attron(COLOR_PAIR(BORDER_COLOR_PAIR));
+        std::string winner_text;
         switch (winner) {
         case 2:
-             mvwprintw(stdscr, 0, 1, "BLUE WON!");
+            winner_text = "BLUE WON!";
             break;
         case 1:
-             mvwprintw(stdscr, 0, 1, "GREEN WON!");
+            winner_text = "GREEN WON!";
              break;
         case 0:
-            mvwprintw(stdscr, 0, 1, "IT WAS A DRAW!");
+            winner_text = "IT WAS A DRAW!";
             break;
         default:
-            mvwprintw(stdscr, 0, 1, "THE GAME ENDED WITH NO WINNER.");
+            winner_text = "THE GAME ENDED WITH NO WINNER."; // not currently a scenario where this happens
             break;
         }
-        std::string quit_text = "PRESS 'q' TO QUIT";
-        mvwprintw(stdscr, max_y-1, max_x-1-quit_text.length(), quit_text.c_str());
+        std::string helper_text = "PRESS 'r' TO RESTART, PRESS 'q' TO QUIT";
+        // TODO: put scoreboard tally in top right ?
+
+        Coordinates winner_text_pos = { 1, 0 }; // top left corner
+        Coordinates helper_text_pos = { max_x-1-static_cast<int>(helper_text.length()), max_y-1 }; // bottom right corner
+
+        attron(COLOR_PAIR(BORDER_COLOR_PAIR));
+        mvwprintw(stdscr, winner_text_pos.y, winner_text_pos.x, winner_text.c_str());
+        mvwprintw(stdscr, helper_text_pos.y, helper_text_pos.x, helper_text.c_str());
         attroff(COLOR_PAIR(BORDER_COLOR_PAIR));
-        wrefresh(stdscr);
+
+        // check for text overlapping with a collision in the border and change its color if appropriate
+        for (Coordinates collision : collision_pos) {
+            // check for overlap with the winner text
+            if (collision.y == winner_text_pos.y) {
+                for(int i=0; i< winner_text.length(); i++) {
+                    int x = winner_text_pos.x + i;
+                    if (x == collision.x) {
+                        char overlapping_ch = winner_text.at(i);
+                        attron(COLOR_PAIR(COLLISION_COLOR_PAIR));
+                        mvwaddch(stdscr, winner_text_pos.y, x, overlapping_ch);
+                        attroff(COLOR_PAIR(COLLISION_COLOR_PAIR));
+                    }
+                }
+            }
+            if (collision.y == helper_text_pos.y) {
+                // check for overlap with helper text
+                for(int i=0; i< helper_text.length(); i++) {
+                    int x = helper_text_pos.x + i;
+                    if (x == collision.x) {
+                        char overlapping_ch = helper_text.at(i);
+                        attron(COLOR_PAIR(COLLISION_COLOR_PAIR));
+                        mvwaddch(stdscr, helper_text_pos.y, x, overlapping_ch);
+                        attroff(COLOR_PAIR(COLLISION_COLOR_PAIR));
+                    }
+                }
+            }
+        }
+        wrefresh(stdscr); // refresh the window
+    }
+
+    void display_error(const char* msg) {
+        attron(COLOR_PAIR(ERROR_COLOR_PAIR));
+        // TODO: put this in bottom left corner
+        mvwprintw(stdscr, 0, 0, msg); // print error to the screen
+        attroff(COLOR_PAIR(ERROR_COLOR_PAIR));
     }
 };
 
@@ -416,13 +478,13 @@ class Game {
     GameWindow& game_window;
     shared_ptr<Player> player_1;
     shared_ptr<Player> player_2;
-    bool game_over, play_again;
+    bool game_over, play_again, started;
     int winner; // -1 = none, 0 = draw, 1 = player_1, 2 = player_2 etc.
     unsigned long frame_count;
 
     void render() {
         if (game_over) {
-            game_window.renderGameOverScreen(winner);
+            game_window.render_game_over_screen(winner);
         } else {
             game_window.render();
         }
@@ -443,14 +505,15 @@ public:
         player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5)),
         game_over(false),
         play_again(false),
+        started(false),
         winner(-1),
         frame_count(0)
     {
         game_window.set_players(player_1, player_2);
     }
 
-    // TODO: set game_over back to false + handle new game
-    void start() {
+    int start() {
+        started = true;
         game_window.start(); // spin up input thread
         while (!game_over) // main game loop
         {
@@ -464,10 +527,37 @@ public:
             ++frame_count;
         }
         play_again = game_window.play_again();
+        return winner;
     }
 
     bool user_quit() {
         return !play_again;
+    }
+
+    void reset() {
+        game_over = false;
+        winner = -1; // reset winner
+        frame_count = 0; // reset frame count
+
+        // reset players
+        player_1 = make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5);
+        player_2 = make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5);
+        game_window.set_players(player_1, player_2);
+    }
+
+    void play() {
+        do {
+            try {
+                if (started) {
+                    reset();
+                }
+                start();
+            } catch (exception& err) {
+                game_window.display_error(err.what());
+                throw;  // rethrow error
+            }
+        } while (!user_quit());
+        // return winner of overall tally ?
     }
 };
 }
