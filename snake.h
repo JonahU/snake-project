@@ -30,10 +30,10 @@ using std::to_string;
 
 namespace snake {
 
-static const int NO_WINNER = -1;
-static const int DRAW      =  0;
-static const int PLAYER1   =  1;
-static const int PLAYER2   =  2;
+inline constexpr int NO_WINNER = -1;
+inline constexpr int DRAW      =  0;
+inline constexpr int PLAYER1   =  1;
+inline constexpr int PLAYER2   =  2;
 
 using Scoreboard = std::map<int, int>;
 
