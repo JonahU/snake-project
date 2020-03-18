@@ -30,10 +30,10 @@ using std::to_string;
 
 namespace snake {
 
-static int NO_WINNER = -1;
-static int DRAW      =  0;
-static int PLAYER1   =  1;
-static int PLAYER2   =  2;
+static const int NO_WINNER = -1;
+static const int DRAW      =  0;
+static const int PLAYER1   =  1;
+static const int PLAYER2   =  2;
 
 using Scoreboard = std::map<int, int>;
 
@@ -57,6 +57,7 @@ struct Coordinates {
         else return x < rhs.x;
     }
 };
+
 using CoordinatesQueue =  std::deque<Coordinates>;
 
 bool operator==(Coordinates const& lhs, Coordinates const& rhs){
@@ -211,16 +212,15 @@ class GameWindow
         curs_set(0); // hide the cursor
 
         // Initialize colors
-        if (has_colors() == FALSE) {
+        if (has_colors() == FALSE) 
             throw std::runtime_error("Your terminal does not support color");
-        }
         start_color();
         init_pair(P1_COLOR_PAIR, COLOR_GREEN, COLOR_GREEN); // (index, foreground, background)
         init_pair(P2_COLOR_PAIR, COLOR_BLUE, COLOR_BLUE);
         init_pair(BACKGROUND_COLOR_PAIR, COLOR_WHITE, COLOR_BLACK);
         init_pair(BORDER_COLOR_PAIR, COLOR_BLACK, COLOR_WHITE);
         init_pair(COLLISION_COLOR_PAIR, COLOR_WHITE, COLOR_RED);
-        init_pair(ERROR_COLOR_PAIR, COLOR_RED, COLOR_WHITE);
+        init_pair(ERROR_COLOR_PAIR, COLOR_WHITE, COLOR_RED);
         wbkgd(stdscr, COLOR_PAIR(BACKGROUND_COLOR_PAIR)); // set window to background color
 
         // Calculate player 1 & 2 starting pos + playable area dimensions
@@ -235,7 +235,7 @@ class GameWindow
     ~GameWindow() {
         read_usr_input.store(false); // if true, thread will never join
         if (input_thread.joinable())
-            input_thread.join();
+            input_thread.detach();
         endwin(); // end curses mode
     }
 
@@ -306,11 +306,20 @@ class GameWindow
             did_collide = true;
         }
         // else player did not collide
-
         if (did_collide) {
             collision_pos.push_back(next_pos);
         }
         return did_collide;
+    }
+
+    void display_error(const char* msg) {
+        // prints an error in red to the bottom left corner of the screen
+        attron(COLOR_PAIR(ERROR_COLOR_PAIR));
+        const Coordinates btm_left = get_bottom_left();
+        std::string err_msg = "ERROR: ";
+        err_msg += msg;
+        mvwprintw(stdscr, btm_left.y, btm_left.x + 1, err_msg.c_str()); // print error to the screen
+        attroff(COLOR_PAIR(ERROR_COLOR_PAIR));
     }
 public:
     static GameWindow& get_instance() {
@@ -334,6 +343,13 @@ public:
             last_char_typed_f = last_char_input_p.get_future();
             input_thread = std::thread(&GameWindow::input_handler, this, std::move(last_char_input_p));
         }
+    }
+
+    void end() {
+        read_usr_input.store(false); // if true, thread will never join
+        if (input_thread.joinable())
+            input_thread.detach();
+        endwin(); // end curses mode
     }
 
     bool play_again() {
@@ -438,7 +454,7 @@ public:
         wrefresh(stdscr);
     }
 
-    void render_game_over_screen(int winner, Scoreboard score) {
+    void render_game_over_screen(int winner, Scoreboard score, std::exception_ptr except_ptr = nullptr) {
         std::string winner_text;
         switch (winner) {
         case 2:
@@ -451,7 +467,7 @@ public:
             winner_text = "IT WAS A DRAW!";
             break;
         default:
-            winner_text = "THE GAME ENDED WITH NO WINNER."; // not currently a scenario where this happens
+            winner_text = "THE GAME ENDED WITH NO WINNER.";
             break;
         }
         std::string helper_text = "PRESS 'r' TO RESTART, PRESS 'q' TO QUIT";
@@ -464,9 +480,10 @@ public:
         winner_text_pos.x++;
         Coordinates helper_text_pos = get_bottom_right(); // bottom right corner
         helper_text_pos.x-=helper_text.length();
-        Coordinates scoreboard_text_pos = get_top_right();
+        Coordinates scoreboard_text_pos = get_top_right(); // top right corner
         scoreboard_text_pos.x-=scoreboard_text.length();
 
+        // print text to the corners of the screen
         attron(COLOR_PAIR(BORDER_COLOR_PAIR));
         mvwprintw(stdscr, winner_text_pos.y, winner_text_pos.x, winner_text.c_str());
         mvwprintw(stdscr, helper_text_pos.y, helper_text_pos.x, helper_text.c_str());
@@ -513,14 +530,16 @@ public:
                 }
             }
         }
-        wrefresh(stdscr); // refresh the window
-    }
 
-    void render_error(const char* msg) {
-        attron(COLOR_PAIR(ERROR_COLOR_PAIR));
-        const Coordinates btm_left = get_bottom_left();
-        mvwprintw(stdscr, btm_left.y, btm_left.x + 1, msg); // print error to the screen
-        attroff(COLOR_PAIR(ERROR_COLOR_PAIR));
+        // if there was an error, print error to the bottom left of the screen
+        if (except_ptr != nullptr) {
+            try {
+                std::rethrow_exception(except_ptr);
+            } catch (const exception& err) {
+                display_error(err.what());
+            }
+        }
+        wrefresh(stdscr); // refresh the window
     }
 
     void reset() {
@@ -550,7 +569,7 @@ class Game {
         CoordinatesQueue const& p1_pos = player_1->update(frame_count);
         CoordinatesQueue const& p2_pos = player_2->update(frame_count);
         winner = game_window.update(p1_pos, p2_pos);
-        if (winner != -1) {
+        if (winner != NO_WINNER) {
             game_over = true;
             ++scoreboard.at(winner);
         }
@@ -558,7 +577,7 @@ class Game {
 
     void reset() {
         game_over = false;
-        winner = -1; // reset winner
+        winner = NO_WINNER; // reset winner
         frame_count = 0; // reset frame count
 
         // reset players
@@ -581,16 +600,20 @@ public:
         game_over(false),
         play_again(false),
         started(false),
-        winner(-1),
+        winner(NO_WINNER),
         frame_count(0)
     {
         game_window.set_players(player_1, player_2);
     }
 
+    ~Game() {
+        game_window.end(); // GameWindow is a singleton, need to explicitly call "cleanup" code
+    }
+
     // play one game then end
     int start() {
-        started = true;
         game_window.start(); // spin up input thread
+        started = true;
         while (!game_over) // main game loop
         {
             auto start_time = std::chrono::steady_clock::now();
@@ -606,7 +629,7 @@ public:
     }
 
     // play game continuously until user quits
-    void play() {
+    Scoreboard play() {
         do {
             try {
                 if (started) {
@@ -614,12 +637,24 @@ public:
                 }
                 start();
                 play_again = game_window.play_again();
-            } catch (exception& err) { // TODO: handle this better?
-                game_window.render_error(err.what());
-                throw;  // rethrow error
+            } catch (const exception& err) {
+                // if game has already started, display error on screen and allow user to play again
+                if (started) {
+                    if (!game_over) {
+                        // error occured before game finished, so manually end the game
+                        game_over = true;
+                        ++scoreboard.at(NO_WINNER);
+                    }
+                    game_window.render_game_over_screen(winner, scoreboard, std::current_exception());
+                    play_again = game_window.play_again();
+                    continue;
+                } else {
+                    // if game has not started yet, rethrow error
+                    throw;
+                }
             }
         } while (play_again);
-        // TODO: return score tally ?
+        return scoreboard;
     }
 };
 }

@@ -1,13 +1,16 @@
 #include "snake.h"
-#include <iostream>
+#include <exception>
 
 using namespace snake;
 
-using std::cout;
-using std::endl;
+using std::exception;
 
 int main() {
-    Game game;
-    game.play();
+    try {
+        Game game;
+        game.play();
+    } catch (const exception&) {
+        return -1;
+    }
     return 0;
 }
