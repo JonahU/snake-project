@@ -7,6 +7,7 @@
 #include <chrono>
 #include <deque>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <ncurses.h>
@@ -25,8 +26,16 @@ using std::shared_mutex;
 using std::shared_lock;
 using std::unique_lock;
 using std::exception;
+using std::to_string;
 
 namespace snake {
+
+static int NO_WINNER = -1;
+static int DRAW      =  0;
+static int PLAYER1   =  1;
+static int PLAYER2   =  2;
+
+using Scoreboard = std::map<int, int>;
 
 enum class Direction {
     None, Up, Down, Left, Right
@@ -172,7 +181,7 @@ public:
         return my_snake.get_body();
     }
 
-    int who() const {
+    int id() const {
         return identifier;
     }
 };
@@ -214,19 +223,8 @@ class GameWindow
         init_pair(ERROR_COLOR_PAIR, COLOR_RED, COLOR_WHITE);
         wbkgd(stdscr, COLOR_PAIR(BACKGROUND_COLOR_PAIR)); // set window to background color
 
-        // Calculate player starting positions 
-        int max_x;
-        int max_y;
-        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
-        int half_y = max_y/2;
-        int quarter_x = max_x / 4;
-        int three_quarter_x = quarter_x*3;
-        player1_start = {quarter_x, half_y};
-        player2_start = {three_quarter_x, half_y};
-
-        // Set initial height & width (width used to calculate starting snake length)
-        initial_height = max_y - 3; // (x axis-1) -2 [border height]
-        initial_width = max_x - 3; // (y axis-1) - 2 [border width]
+        // Calculate player 1 & 2 starting pos + playable area dimensions
+        calculate_starting_positions();
     };
 
     GameWindow(const GameWindow&) = delete;
@@ -271,6 +269,23 @@ class GameWindow
             ' '  // bottom right corner
         );
         attroff(COLOR_PAIR(BORDER_COLOR_PAIR));
+    }
+
+    void calculate_starting_positions() {
+        // Calculate player starting positions 
+        int max_x;
+        int max_y;
+        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
+        int half_y = max_y/2;
+        int quarter_x = max_x / 4;
+        int three_quarter_x = quarter_x*3;
+        // set player start positions
+        player1_start = {quarter_x, half_y};
+        player2_start = {three_quarter_x, half_y};
+
+        // set initial height & width (width used to calculate starting snake length)
+        initial_height = max_y - 3; // (x axis-1) -2 [border height]
+        initial_width = max_x - 3; // (y axis-1) - 2 [border width]
     }
 
     bool did_player_collide(CoordinatesQueue const& player_pos, CoordinatesQueue const& other_player_pos) {
@@ -328,12 +343,11 @@ public:
         do {
             // keep reading ignoring input until user quits or restarts game
             switch (last_char_typed) {
-                case 'Q': 
+                case 'Q':
                 case 'q':
                     return false; // quit
                 case 'R':
                 case 'r':
-                    collision_pos.clear(); // reset collision vector for next game
                     return true; // restart
                 default:
                     break; // do nothing
@@ -343,23 +357,41 @@ public:
     }
 
     Coordinates get_player1_start() const {
-        // TODO: calculate on call so if window size changes, new start pos
         return player1_start;
     }
 
     Coordinates get_player2_start() const {
-        // TODO: calculate on call so if window size changes, new start pos
         return player2_start;
     }
 
     int get_initial_height() const {
-        // TODO: calculate on call so if window size changes, updated value
         return initial_height;
     }
 
     int get_initial_width() const {
-        // TODO: calculate on call so if window size changes, updated value
         return initial_width;
+    }
+
+    Coordinates get_top_left() const {
+        return { 0, 0 };
+    }
+
+    Coordinates get_top_right() const {
+        int max_x, max_y;
+        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
+        return { max_x - 1, 0 };
+    }
+
+    Coordinates get_bottom_left() const {
+        int max_x, max_y;
+        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
+        return { 0, max_y -1 };
+    }
+
+    Coordinates get_bottom_right() const {
+        int max_x, max_y;
+        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
+        return { max_x - 1, max_y - 1 };
     }
 
     int update(CoordinatesQueue const& p1_pos, CoordinatesQueue const& p2_pos) {
@@ -406,10 +438,7 @@ public:
         wrefresh(stdscr);
     }
 
-    void render_game_over_screen(int winner) {
-        int max_x, max_y;
-        getmaxyx(stdscr, max_y, max_x); // get terminal dimensions
-
+    void render_game_over_screen(int winner, Scoreboard score) {
         std::string winner_text;
         switch (winner) {
         case 2:
@@ -426,14 +455,22 @@ public:
             break;
         }
         std::string helper_text = "PRESS 'r' TO RESTART, PRESS 'q' TO QUIT";
-        // TODO: put scoreboard tally in top right ?
+        std::string scoreboard_text = 
+            "SCOREBOARD: GREEN " + to_string(score.at(PLAYER1)) + ", BLUE " + to_string(score.at(PLAYER2));
+        if (score.at(DRAW) > 0)
+            scoreboard_text += ", DRAW " + to_string(score.at(DRAW));
 
-        Coordinates winner_text_pos = { 1, 0 }; // top left corner
-        Coordinates helper_text_pos = { max_x-1-static_cast<int>(helper_text.length()), max_y-1 }; // bottom right corner
+        Coordinates winner_text_pos = get_top_left(); // top left corner
+        winner_text_pos.x++;
+        Coordinates helper_text_pos = get_bottom_right(); // bottom right corner
+        helper_text_pos.x-=helper_text.length();
+        Coordinates scoreboard_text_pos = get_top_right();
+        scoreboard_text_pos.x-=scoreboard_text.length();
 
         attron(COLOR_PAIR(BORDER_COLOR_PAIR));
         mvwprintw(stdscr, winner_text_pos.y, winner_text_pos.x, winner_text.c_str());
         mvwprintw(stdscr, helper_text_pos.y, helper_text_pos.x, helper_text.c_str());
+        mvwprintw(stdscr, scoreboard_text_pos.y, scoreboard_text_pos.x, scoreboard_text.c_str());
         attroff(COLOR_PAIR(BORDER_COLOR_PAIR));
 
         // check for text overlapping with a collision in the border and change its color if appropriate
@@ -462,15 +499,33 @@ public:
                     }
                 }
             }
+
+            if (collision.y == scoreboard_text_pos.y) {
+                // check for overlap with scoreboard text
+                for(int i=0; i< scoreboard_text.length(); i++) {
+                    int x = scoreboard_text_pos.x + i;
+                    if (x == collision.x) {
+                        char overlapping_ch = scoreboard_text.at(i);
+                        attron(COLOR_PAIR(COLLISION_COLOR_PAIR));
+                        mvwaddch(stdscr, scoreboard_text_pos.y, x, overlapping_ch);
+                        attroff(COLOR_PAIR(COLLISION_COLOR_PAIR));
+                    }
+                }
+            }
         }
         wrefresh(stdscr); // refresh the window
     }
 
-    void display_error(const char* msg) {
+    void render_error(const char* msg) {
         attron(COLOR_PAIR(ERROR_COLOR_PAIR));
-        // TODO: put this in bottom left corner
-        mvwprintw(stdscr, 0, 0, msg); // print error to the screen
+        const Coordinates btm_left = get_bottom_left();
+        mvwprintw(stdscr, btm_left.y, btm_left.x + 1, msg); // print error to the screen
         attroff(COLOR_PAIR(ERROR_COLOR_PAIR));
+    }
+
+    void reset() {
+        collision_pos.clear(); // reset saved collision info
+        calculate_starting_positions(); // re-calculate start pos
     }
 };
 
@@ -478,13 +533,14 @@ class Game {
     GameWindow& game_window;
     shared_ptr<Player> player_1;
     shared_ptr<Player> player_2;
+    Scoreboard scoreboard;
     bool game_over, play_again, started;
     int winner; // -1 = none, 0 = draw, 1 = player_1, 2 = player_2 etc.
     unsigned long frame_count;
 
     void render() {
         if (game_over) {
-            game_window.render_game_over_screen(winner);
+            game_window.render_game_over_screen(winner, scoreboard);
         } else {
             game_window.render();
         }
@@ -496,13 +552,32 @@ class Game {
         winner = game_window.update(p1_pos, p2_pos);
         if (winner != -1) {
             game_over = true;
+            ++scoreboard.at(winner);
         }
+    }
+
+    void reset() {
+        game_over = false;
+        winner = -1; // reset winner
+        frame_count = 0; // reset frame count
+
+        // reset players
+        game_window.reset();
+        player_1 = make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5);
+        player_2 = make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5);
+        game_window.set_players(player_1, player_2);
     }
 public:
     Game() :
         game_window(GameWindow::get_instance()),
-        player_1(make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5)),
-        player_2(make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5)),
+        player_1(make_shared<Player>(PLAYER1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5)),
+        player_2(make_shared<Player>(PLAYER2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5)),
+        scoreboard{
+            { NO_WINNER     , 0 },  // no winner
+            { DRAW          , 0 },  // draw
+            { player_1->id(), 0 },  // player 1
+            { player_2->id(), 0 }   // player 2
+        },
         game_over(false),
         play_again(false),
         started(false),
@@ -512,6 +587,7 @@ public:
         game_window.set_players(player_1, player_2);
     }
 
+    // play one game then end
     int start() {
         started = true;
         game_window.start(); // spin up input thread
@@ -526,25 +602,10 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(1000)/FRAMES_PER_SECOND - time_taken_milliseconds); // run loop every 50ms
             ++frame_count;
         }
-        play_again = game_window.play_again();
         return winner;
     }
 
-    bool user_quit() {
-        return !play_again;
-    }
-
-    void reset() {
-        game_over = false;
-        winner = -1; // reset winner
-        frame_count = 0; // reset frame count
-
-        // reset players
-        player_1 = make_shared<Player>(1, game_window.get_player1_start(), Direction::Right, 'w', 's', 'a', 'd', game_window.get_initial_width() / 5);
-        player_2 = make_shared<Player>(2, game_window.get_player2_start(), Direction::Left, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, game_window.get_initial_width() / 5);
-        game_window.set_players(player_1, player_2);
-    }
-
+    // play game continuously until user quits
     void play() {
         do {
             try {
@@ -552,12 +613,13 @@ public:
                     reset();
                 }
                 start();
-            } catch (exception& err) {
-                game_window.display_error(err.what());
+                play_again = game_window.play_again();
+            } catch (exception& err) { // TODO: handle this better?
+                game_window.render_error(err.what());
                 throw;  // rethrow error
             }
-        } while (!user_quit());
-        // return winner of overall tally ?
+        } while (play_again);
+        // TODO: return score tally ?
     }
 };
 }
