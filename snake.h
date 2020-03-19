@@ -17,14 +17,19 @@
 #include <thread>
 #include <vector>
 
-using std::find;
 using std::shared_ptr;
 using std::make_shared;
 using std::shared_mutex;
 using std::shared_lock;
 using std::unique_lock;
 using std::exception;
+using std::exception_ptr;
+using std::current_exception;
+using std::rethrow_exception;
+using std::runtime_error;
 using std::to_string;
+using std::find;
+using std::vector;
 
 namespace snake {
 
@@ -194,7 +199,7 @@ class GameWindow
     inline static std::atomic<bool> read_usr_input;
     std::future<int> last_char_typed_f;
     shared_ptr<Player> player_1, player_2;
-    std::vector<Coordinates> collision_pos;
+    vector<Coordinates> collision_pos;
     static const int P1_COLOR_PAIR = 1;
     static const int P2_COLOR_PAIR = 2;
     static const int BACKGROUND_COLOR_PAIR = 3;
@@ -212,7 +217,7 @@ class GameWindow
 
         // Initialize colors
         if (has_colors() == FALSE) 
-            throw std::runtime_error("Your terminal does not support color");
+            throw runtime_error("Your terminal does not support color");
         start_color();
         init_pair(P1_COLOR_PAIR, COLOR_GREEN, COLOR_GREEN); // (index, foreground, background)
         init_pair(P2_COLOR_PAIR, COLOR_BLUE, COLOR_BLUE);
@@ -333,7 +338,7 @@ public:
 
     void start() {
         if (player_1 == nullptr || player_2 == nullptr)
-            throw std::runtime_error("game_window::start called before setting players");
+            throw runtime_error("game_window::start called before setting players");
 
         // start reading user keyboard input
         read_usr_input.store(true);
@@ -453,7 +458,7 @@ public:
         wrefresh(stdscr);
     }
 
-    void render_game_over_screen(int winner, Scoreboard score, std::exception_ptr except_ptr = nullptr) {
+    void render_game_over_screen(int winner, Scoreboard score, exception_ptr except_ptr = nullptr) {
         std::string winner_text;
         switch (winner) {
             case 2:
@@ -503,8 +508,8 @@ public:
                     }
                 }
             }
+            // check for overlap with helper text
             if (collision.y == helper_text_pos.y) {
-                // check for overlap with helper text
                 for(int i=0; i< helper_text.length(); i++) {
                     int x = helper_text_pos.x + i;
                     if (x == collision.x) {
@@ -515,9 +520,8 @@ public:
                     }
                 }
             }
-
+            // check for overlap with scoreboard text
             if (collision.y == scoreboard_text_pos.y) {
-                // check for overlap with scoreboard text
                 for(int i=0; i< scoreboard_text.length(); i++) {
                     int x = scoreboard_text_pos.x + i;
                     if (x == collision.x) {
@@ -533,7 +537,7 @@ public:
         // if there was an error, print error to the bottom left of the screen
         if (except_ptr != nullptr) {
             try {
-                std::rethrow_exception(except_ptr);
+                rethrow_exception(except_ptr);
             } catch (const exception& err) {
                 display_error(err.what());
             }
@@ -643,7 +647,7 @@ public:
                         ++scoreboard.at(NO_WINNER);
                     }
                     // display error on the screen
-                    game_window.render_game_over_screen(winner, scoreboard, std::current_exception());
+                    game_window.render_game_over_screen(winner, scoreboard, current_exception());
                 } else {
                     // if game has not started yet, rethrow error
                     throw;
