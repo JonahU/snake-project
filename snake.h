@@ -17,8 +17,6 @@
 #include <thread>
 #include <vector>
 
-#define FRAMES_PER_SECOND 20
-
 using std::find;
 using std::shared_ptr;
 using std::make_shared;
@@ -34,6 +32,7 @@ inline constexpr int NO_WINNER = -1;
 inline constexpr int DRAW      =  0;
 inline constexpr int PLAYER1   =  1;
 inline constexpr int PLAYER2   =  2;
+inline constexpr unsigned FRAMES_PER_SECOND = 20;
 
 using Scoreboard = std::map<int, int>;
 
@@ -58,7 +57,7 @@ struct Coordinates {
     }
 };
 
-using CoordinatesQueue =  std::deque<Coordinates>;
+using CoordinatesQueue = std::deque<Coordinates>;
 
 bool operator==(Coordinates const& lhs, Coordinates const& rhs){
     if ((lhs.x == rhs.x) && (lhs.y == rhs.y)) {
@@ -69,35 +68,36 @@ bool operator==(Coordinates const& lhs, Coordinates const& rhs){
 
 class Snake {
     CoordinatesQueue snake_body;
-    Direction direction;
+    Direction current_dir, next_dir;
     mutable shared_mutex direction_mutex;
     int length;
 
     Coordinates get_next_pos() {
-        shared_lock slock(direction_mutex); // multiple readers allowed
+        unique_lock ulock(direction_mutex); // only one current_dir writer allowed
+        current_dir = next_dir;
         auto next_pos = get_head();
-        switch (direction)
-        {
-        case Direction::Up:
-            next_pos.y --;
-            break;
-        case Direction::Down:
-            next_pos.y ++;
-            break;
-        case Direction::Left:
-            next_pos.x --;
-            break;
-        case Direction::Right:
-            next_pos.x ++;
-            break;
-        default:
-            break;
+        switch (current_dir) {
+            case Direction::Up:
+                next_pos.y --;
+                break;
+            case Direction::Down:
+                next_pos.y ++;
+                break;
+            case Direction::Left:
+                next_pos.x --;
+                break;
+            case Direction::Right:
+                next_pos.x ++;
+                break;
+            default:
+                // do nothing (don't move)
+                break;
         }
         return next_pos;
     }
 
 public:
-    Snake(Coordinates start_pos, Direction start_dir, int len) :length(len), direction(start_dir) {
+    Snake(Coordinates start_pos, Direction start_dir, int len) :length(len), current_dir(start_dir), next_dir(start_dir) {
         snake_body.push_front(start_pos);
     }
 
@@ -110,29 +110,28 @@ public:
         return snake_body;
     }
 
-    // TODO: fix bug where can turn into body with quick presses
-    void change_direction(Direction new_dir) {
-        unique_lock ulock(direction_mutex); // only one writer allowed
-        if (new_dir != get_opposite(direction))
-            direction = new_dir;
+    void change_direction(Direction next) {
+        shared_lock slock(direction_mutex); // multiple current_dir readers allowed
+        if (next != get_opposite(current_dir)) { 
+            next_dir = next;
+            // splitting direction into current and next prevents the user pressing very quickly
+            // and changing direction twice so that the snake turns in on itself and crashes in 1 move
+        }
     }
 
-    void move() {
+    void move() { // does not increase length of snake
         if(snake_body.size() == length) {
             snake_body.pop_back();
         }
         snake_body.push_front(get_next_pos());
     }
 
-    void move(int const& frames_elapsed) {
+    void move(int const frames_elapsed) {// increases length of snake
         if ((frames_elapsed % (2*FRAMES_PER_SECOND)) == 0) {
             // 2 * 20fps, every 2 seconds increase length by 1
             ++length;
         }
-        if(snake_body.size() == length) {
-            snake_body.pop_back();
-        }
-        snake_body.push_front(get_next_pos());
+        move(); // move the snake like usual
     }
 };
 
@@ -196,12 +195,12 @@ class GameWindow
     std::future<int> last_char_typed_f;
     shared_ptr<Player> player_1, player_2;
     std::vector<Coordinates> collision_pos;
-    int P1_COLOR_PAIR = 1;
-    int P2_COLOR_PAIR = 2;
-    int BACKGROUND_COLOR_PAIR = 3;
-    int BORDER_COLOR_PAIR = 4;
-    int COLLISION_COLOR_PAIR = 5;
-    int ERROR_COLOR_PAIR = 6;
+    static const int P1_COLOR_PAIR = 1;
+    static const int P2_COLOR_PAIR = 2;
+    static const int BACKGROUND_COLOR_PAIR = 3;
+    static const int BORDER_COLOR_PAIR = 4;
+    static const int COLLISION_COLOR_PAIR = 5;
+    static const int ERROR_COLOR_PAIR = 6;
 
     GameWindow() : player_1(nullptr), player_2(nullptr) {
         // Initalize curses
@@ -235,7 +234,7 @@ class GameWindow
     ~GameWindow() {
         read_usr_input.store(false); // if true, thread will never join
         if (input_thread.joinable())
-            input_thread.detach();
+            input_thread.detach(); // detach is used over join because join will wait for a final key press
         endwin(); // end curses mode
     }
 
@@ -348,7 +347,7 @@ public:
     void end() {
         read_usr_input.store(false); // if true, thread will never join
         if (input_thread.joinable())
-            input_thread.detach();
+            input_thread.detach(); // detach is used over join because join will wait for a final key press
         endwin(); // end curses mode
     }
 
@@ -457,18 +456,18 @@ public:
     void render_game_over_screen(int winner, Scoreboard score, std::exception_ptr except_ptr = nullptr) {
         std::string winner_text;
         switch (winner) {
-        case 2:
-            winner_text = "BLUE WON!";
-            break;
-        case 1:
-            winner_text = "GREEN WON!";
-             break;
-        case 0:
-            winner_text = "IT WAS A DRAW!";
-            break;
-        default:
-            winner_text = "THE GAME ENDED WITH NO WINNER.";
-            break;
+            case 2:
+                winner_text = "BLUE WON!";
+                break;
+            case 1:
+                winner_text = "GREEN WON!";
+                 break;
+            case 0:
+                winner_text = "IT WAS A DRAW!";
+                break;
+            default:
+                winner_text = "THE GAME ENDED WITH NO WINNER.";
+                break;
         }
         std::string helper_text = "PRESS 'r' TO RESTART, PRESS 'q' TO QUIT";
         std::string scoreboard_text = 
@@ -632,11 +631,9 @@ public:
     Scoreboard play() {
         do {
             try {
-                if (started) {
+                if (started)
                     reset();
-                }
                 start();
-                play_again = game_window.play_again();
             } catch (const exception& err) {
                 // if game has already started, display error on screen and allow user to play again
                 if (started) {
@@ -645,14 +642,14 @@ public:
                         game_over = true;
                         ++scoreboard.at(NO_WINNER);
                     }
+                    // display error on the screen
                     game_window.render_game_over_screen(winner, scoreboard, std::current_exception());
-                    play_again = game_window.play_again();
-                    continue;
                 } else {
                     // if game has not started yet, rethrow error
                     throw;
                 }
             }
+            play_again = game_window.play_again(); // check if user wants to play again
         } while (play_again);
         return scoreboard;
     }
